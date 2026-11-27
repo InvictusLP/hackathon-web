@@ -1,0 +1,774 @@
+diff --git a/node_modules/@luxalgo/vela/dist/chunk-2IPXYM4B.js b/node_modules/@luxalgo/vela/dist/chunk-2IPXYM4B.js
+index 69fdb6e..3e37bc5 100644
+--- a/node_modules/@luxalgo/vela/dist/chunk-2IPXYM4B.js
++++ b/node_modules/@luxalgo/vela/dist/chunk-2IPXYM4B.js
+@@ -4147,6 +4147,9 @@ function decimalsFor(ref) {
+ }
+ function fmtPrice(n, dp) {
+   if (n == null || !Number.isFinite(n)) return "\u2014";
++  // invictus patch: the host may write a price its own way (a run of zeros in subscript); null keeps this one.
++  const hostLabel = typeof globalThis.__velaPriceLabel === "function" ? globalThis.__velaPriceLabel(n) : null;
++  if (typeof hostLabel === "string") return hostLabel;
+   const d = dp ?? decimalsFor(n);
+   return n.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+ }
+diff --git a/node_modules/@luxalgo/vela/dist/chunk-HMHA733L.js b/node_modules/@luxalgo/vela/dist/chunk-HMHA733L.js
+index 8873cc4..3d661b2 100644
+--- a/node_modules/@luxalgo/vela/dist/chunk-HMHA733L.js
++++ b/node_modules/@luxalgo/vela/dist/chunk-HMHA733L.js
+@@ -346,11 +346,11 @@ var NAMED_TF_MS = { D: 864e5, W: 6048e5, M: 2592e6 };
+ function timeframeToMs(timeframe) {
+   const tf = timeframe.trim();
+   if (NAMED_TF_MS[tf]) return NAMED_TF_MS[tf];
+-  const m = /^(\d+)\s*(m|h|d|w)?$/i.exec(tf);
++  const m = /^(\d+)\s*(s|m|h|d|w)?$/i.exec(tf);
+   if (m) {
+     const n = parseInt(m[1], 10);
+     const unit = (m[2] ?? "m").toLowerCase();
+-    const mult = unit === "m" ? 6e4 : unit === "h" ? 36e5 : unit === "d" ? 864e5 : 6048e5;
++    const mult = unit === "s" ? 1e3 : unit === "m" ? 6e4 : unit === "h" ? 36e5 : unit === "d" ? 864e5 : 6048e5;
+     return n * mult;
+   }
+   return 36e5;
+@@ -4992,8 +4992,8 @@ var PaneControls = class {
+ var AXIS_MASTER_W = 64;
+ var AXIS_MERGED_W = 56;
+ var PANE_SEPARATOR_PX = 3;
+-function axisColumnX(dataW, column) {
+-  return column === 0 ? dataW : dataW + AXIS_MASTER_W + (column - 1) * AXIS_MERGED_W;
++function axisColumnX(dataW, column, master = AXIS_MASTER_W, merged = AXIS_MERGED_W) {
++  return column === 0 ? dataW : dataW + master + (column - 1) * merged;
+ }
+ 
+ // src/renderers/native/chrome/AxisScaleButtons.ts
+@@ -5032,7 +5032,7 @@ var AxisScaleButtons = class {
+       const x = e.clientX - rect.left;
+       const gutterLeft = rect.width - this.deps.rightAxis();
+       let hit = null;
+-      if (x >= gutterLeft && x <= gutterLeft + AXIS_MASTER_W) {
++      if (x >= gutterLeft && x <= gutterLeft + this.deps.masterAxis()) {
+         const y = e.clientY - rect.top;
+         for (const p of this.deps.panes()) {
+           if (p.collapsed || p.height < MIN_PANE_H) continue;
+@@ -5109,7 +5109,8 @@ var AxisScaleButtons = class {
+       this.cluster.style.display = "none";
+       return;
+     }
+-    this.cluster.style.right = `${this.deps.rightAxis() - AXIS_MASTER_W}px`;
++    this.cluster.style.width = `${this.deps.masterAxis() - AXIS_BORDER}px`;
++    this.cluster.style.right = `${this.deps.rightAxis() - this.deps.masterAxis()}px`;
+     this.cluster.style.top = `${pane.top + pane.height - CLUSTER_H}px`;
+     this.cluster.style.display = "flex";
+     this.sync();
+@@ -9743,6 +9744,9 @@ function formatAxisValue(scale, heightPx, value, pct, mintick, format) {
+   return formatPriceLabel(scale, heightPx, value, mintick);
+ }
+ function formatPriceLabel(scale, heightPx, value, mintick) {
++  // invictus patch: the host may write a price its own way (a run of zeros in subscript); null keeps this one.
++  const hostLabel = typeof globalThis.__velaPriceLabel === "function" ? globalThis.__velaPriceLabel(value) : null;
++  if (typeof hostLabel === "string") return hostLabel;
+   const wideLog = scale.log && Math.log10(scale.max) - Math.log10(scale.min) >= 1.1;
+   if (wideLog) {
+     const d = valueDecimals(value);
+@@ -10543,7 +10547,7 @@ var ChromeRenderer = class {
+       merged.forEach((model, k) => {
+         const sc = scene.indicatorScales.get(model.id)?.scale;
+         if (!sc) return;
+-        const x = axisColumnX(dataW, k + 1);
++        const x = axisColumnX(dataW, k + 1, scene.axisMasterWidth, scene.axisMergedWidth);
+         for (const t of paneAxisTicks(sc, pane.bounds.height, void 0, scene.priceMintick)) {
+           const y = coords.priceToY(t.price, sc, pane.bounds);
+           if (y < pane.bounds.top + 6 || y > pane.bounds.top + pane.bounds.height - 4) continue;
+@@ -19706,6 +19710,7 @@ var NativeRenderer = class {
+     this.axisScaleButtons = new AxisScaleButtons(this.plot, theme, {
+       panes: () => this.axisScaleViews(),
+       rightAxis: () => this.rightAxisW,
++      masterAxis: () => this.scene.axisMasterWidth ?? AXIS_MASTER_W,
+       onToggleAuto: (paneId) => this.togglePaneAuto(paneId),
+       onToggleLog: (paneId) => {
+         const pane = this.scene.panes.get(paneId);
+@@ -20071,7 +20076,7 @@ var NativeRenderer = class {
+   }
+   /** Recompute the right-gutter width (master column + one per merged scale). Re-sizes on change. */
+   refreshAxisWidth() {
+-    const w = RIGHT_AXIS_W + AXIS_COL_W * this.maxOwnScaleColumns();
++    const w = (this.scene.axisMasterWidth ?? RIGHT_AXIS_W) + (this.scene.axisMergedWidth ?? AXIS_COL_W) * this.maxOwnScaleColumns();
+     if (w === this.rightAxisW) return false;
+     this.rightAxisW = w;
+     this.publishGutters();
+@@ -20692,8 +20697,10 @@ var NativeRenderer = class {
+     if (!pane) return null;
+     const dataW = this.coords.width;
+     const merged = this.scene.ownScaleIndicatorsForPane(pane.id);
+-    if (x >= dataW + AXIS_MASTER_W && merged.length > 0) {
+-      const k = Math.floor((x - dataW - AXIS_MASTER_W) / AXIS_MERGED_W);
++    const masterWidth = this.scene.axisMasterWidth ?? AXIS_MASTER_W;
++    const mergedWidth = this.scene.axisMergedWidth ?? AXIS_MERGED_W;
++    if (x >= dataW + masterWidth && merged.length > 0) {
++      const k = Math.floor((x - dataW - masterWidth) / mergedWidth);
+       const model = merged[k];
+       if (model) return { holder: this.scene.ensureIndicatorScale(model.id, pane.scaleTarget), height: pane.bounds.height };
+     }
+@@ -21117,8 +21124,52 @@ var NativeRenderer = class {
+       cursor: this.lastPointer
+     };
+   }
++  /** Fit full axis labels before painting; keep widths once grown to avoid autoscale jitter. */
++  fitAxisLabels() {
++    const ctx = this.chromeCanvas?.getContext("2d");
++    if (!ctx || this.coords.width <= 0) return;
++    const scene = this.scene;
++    let master = scene.axisMasterWidth ?? AXIS_MASTER_W;
++    let merged = scene.axisMergedWidth ?? AXIS_MERGED_W;
++    ctx.save();
++    const font = `${scene.style.fontSize}px ${this.theme.fontFamily}`;
++    const measure = (label, major = false) => {
++      ctx.font = major ? `600 ${font}` : font;
++      return Math.ceil(ctx.measureText(label).width) + 12;
++    };
++    for (const pane of scene.orderedPanes()) {
++      if (pane.collapsed || pane.bounds.height <= 0) continue;
++      for (const tick of this.priceAxisTicks.ticksFor(scene, pane, this.coords))
++        master = Math.max(master, measure(tick.label, tick.major === true));
++      for (const band of pane.axisBands ?? []) master = Math.max(master, measure(band.label));
++      if (pane.axisFormat !== "none") {
++        const pct = percentScaleFor(scene, pane);
++        const last = pane.kind === "price" ? scene.bars[scene.bars.length - 1]?.close : undefined;
++        for (const value of [pane.scale.min, pane.scale.max, last]) {
++          if (Number.isFinite(value)) master = Math.max(master, measure(formatAxisValue(pane.scale, pane.bounds.height, value, pct, scene.priceMintick, pane.axisFormat)));
++        }
++      }
++      for (const model of scene.ownScaleIndicatorsForPane(pane.id)) {
++        const scale = scene.indicatorScales.get(model.id)?.scale;
++        if (!scale) continue;
++        for (const tick of paneAxisTicks(scale, pane.bounds.height, undefined, scene.priceMintick))
++          merged = Math.max(merged, measure(tick.label));
++      }
++    }
++    ctx.restore();
++    const width = master + merged * this.maxOwnScaleColumns();
++    scene.axisMasterWidth = master;
++    scene.axisMergedWidth = merged;
++    if (width === this.rightAxisW) return;
++    const plotWidth = this.coords.width + this.rightAxisW;
++    this.rightAxisW = width;
++    this.coords.setSize(Math.max(1, plotWidth - width), this.coords.height, this.coords.dpr);
++    this.publishGutters();
++    this.layoutPanes();
++  }
+   /** Paint the below-data (L-1) + geometry (L0) + chrome (L1) layers from the current scene/coords. */
+   paintData() {
++    this.fitAxisLabels();
+     this.syncLayerCanvasOrder();
+     this.stampScaleInvert();
+     this.backend.modelAlpha = this.modelAlpha;
+diff --git a/node_modules/@luxalgo/vela/dist/index.cjs b/node_modules/@luxalgo/vela/dist/index.cjs
+index f338482..9b41e2a 100644
+--- a/node_modules/@luxalgo/vela/dist/index.cjs
++++ b/node_modules/@luxalgo/vela/dist/index.cjs
+@@ -7296,11 +7296,11 @@ var NAMED_TF_MS = { D: 864e5, W: 6048e5, M: 2592e6 };
+ function timeframeToMs(timeframe) {
+   const tf = timeframe.trim();
+   if (NAMED_TF_MS[tf]) return NAMED_TF_MS[tf];
+-  const m = /^(\d+)\s*(m|h|d|w)?$/i.exec(tf);
++  const m = /^(\d+)\s*(s|m|h|d|w)?$/i.exec(tf);
+   if (m) {
+     const n = parseInt(m[1], 10);
+     const unit = (m[2] ?? "m").toLowerCase();
+-    const mult = unit === "m" ? 6e4 : unit === "h" ? 36e5 : unit === "d" ? 864e5 : 6048e5;
++    const mult = unit === "s" ? 1e3 : unit === "m" ? 6e4 : unit === "h" ? 36e5 : unit === "d" ? 864e5 : 6048e5;
+     return n * mult;
+   }
+   return 36e5;
+@@ -16825,8 +16825,8 @@ var PaneControls = class {
+ var AXIS_MASTER_W = 64;
+ var AXIS_MERGED_W = 56;
+ var PANE_SEPARATOR_PX = 3;
+-function axisColumnX(dataW, column) {
+-  return column === 0 ? dataW : dataW + AXIS_MASTER_W + (column - 1) * AXIS_MERGED_W;
++function axisColumnX(dataW, column, master = AXIS_MASTER_W, merged = AXIS_MERGED_W) {
++  return column === 0 ? dataW : dataW + master + (column - 1) * merged;
+ }
+ 
+ // src/renderers/native/chrome/AxisScaleButtons.ts
+@@ -16865,7 +16865,7 @@ var AxisScaleButtons = class {
+       const x = e.clientX - rect.left;
+       const gutterLeft = rect.width - this.deps.rightAxis();
+       let hit = null;
+-      if (x >= gutterLeft && x <= gutterLeft + AXIS_MASTER_W) {
++      if (x >= gutterLeft && x <= gutterLeft + this.deps.masterAxis()) {
+         const y = e.clientY - rect.top;
+         for (const p of this.deps.panes()) {
+           if (p.collapsed || p.height < MIN_PANE_H) continue;
+@@ -16942,7 +16942,8 @@ var AxisScaleButtons = class {
+       this.cluster.style.display = "none";
+       return;
+     }
+-    this.cluster.style.right = `${this.deps.rightAxis() - AXIS_MASTER_W}px`;
++    this.cluster.style.width = `${this.deps.masterAxis() - AXIS_BORDER}px`;
++    this.cluster.style.right = `${this.deps.rightAxis() - this.deps.masterAxis()}px`;
+     this.cluster.style.top = `${pane.top + pane.height - CLUSTER_H}px`;
+     this.cluster.style.display = "flex";
+     this.sync();
+@@ -21540,6 +21541,9 @@ function formatAxisValue(scale, heightPx, value, pct, mintick, format) {
+   return formatPriceLabel(scale, heightPx, value, mintick);
+ }
+ function formatPriceLabel(scale, heightPx, value, mintick) {
++  // invictus patch: the host may write a price its own way (a run of zeros in subscript); null keeps this one.
++  const hostLabel = typeof globalThis.__velaPriceLabel === "function" ? globalThis.__velaPriceLabel(value) : null;
++  if (typeof hostLabel === "string") return hostLabel;
+   const wideLog = scale.log && Math.log10(scale.max) - Math.log10(scale.min) >= 1.1;
+   if (wideLog) {
+     const d = valueDecimals(value);
+@@ -22340,7 +22344,7 @@ var ChromeRenderer = class {
+       merged.forEach((model, k) => {
+         const sc = scene.indicatorScales.get(model.id)?.scale;
+         if (!sc) return;
+-        const x = axisColumnX(dataW, k + 1);
++        const x = axisColumnX(dataW, k + 1, scene.axisMasterWidth, scene.axisMergedWidth);
+         for (const t of paneAxisTicks(sc, pane.bounds.height, void 0, scene.priceMintick)) {
+           const y = coords.priceToY(t.price, sc, pane.bounds);
+           if (y < pane.bounds.top + 6 || y > pane.bounds.top + pane.bounds.height - 4) continue;
+@@ -32269,6 +32273,7 @@ var NativeRenderer = class {
+     this.axisScaleButtons = new AxisScaleButtons(this.plot, theme, {
+       panes: () => this.axisScaleViews(),
+       rightAxis: () => this.rightAxisW,
++      masterAxis: () => this.scene.axisMasterWidth ?? AXIS_MASTER_W,
+       onToggleAuto: (paneId) => this.togglePaneAuto(paneId),
+       onToggleLog: (paneId) => {
+         const pane = this.scene.panes.get(paneId);
+@@ -32634,7 +32639,7 @@ var NativeRenderer = class {
+   }
+   /** Recompute the right-gutter width (master column + one per merged scale). Re-sizes on change. */
+   refreshAxisWidth() {
+-    const w = RIGHT_AXIS_W + AXIS_COL_W * this.maxOwnScaleColumns();
++    const w = (this.scene.axisMasterWidth ?? RIGHT_AXIS_W) + (this.scene.axisMergedWidth ?? AXIS_COL_W) * this.maxOwnScaleColumns();
+     if (w === this.rightAxisW) return false;
+     this.rightAxisW = w;
+     this.publishGutters();
+@@ -33255,8 +33260,10 @@ var NativeRenderer = class {
+     if (!pane) return null;
+     const dataW = this.coords.width;
+     const merged = this.scene.ownScaleIndicatorsForPane(pane.id);
+-    if (x >= dataW + AXIS_MASTER_W && merged.length > 0) {
+-      const k = Math.floor((x - dataW - AXIS_MASTER_W) / AXIS_MERGED_W);
++    const masterWidth = this.scene.axisMasterWidth ?? AXIS_MASTER_W;
++    const mergedWidth = this.scene.axisMergedWidth ?? AXIS_MERGED_W;
++    if (x >= dataW + masterWidth && merged.length > 0) {
++      const k = Math.floor((x - dataW - masterWidth) / mergedWidth);
+       const model = merged[k];
+       if (model) return { holder: this.scene.ensureIndicatorScale(model.id, pane.scaleTarget), height: pane.bounds.height };
+     }
+@@ -33680,8 +33687,52 @@ var NativeRenderer = class {
+       cursor: this.lastPointer
+     };
+   }
++  /** Fit full axis labels before painting; keep widths once grown to avoid autoscale jitter. */
++  fitAxisLabels() {
++    const ctx = this.chromeCanvas?.getContext("2d");
++    if (!ctx || this.coords.width <= 0) return;
++    const scene = this.scene;
++    let master = scene.axisMasterWidth ?? AXIS_MASTER_W;
++    let merged = scene.axisMergedWidth ?? AXIS_MERGED_W;
++    ctx.save();
++    const font = `${scene.style.fontSize}px ${this.theme.fontFamily}`;
++    const measure = (label, major = false) => {
++      ctx.font = major ? `600 ${font}` : font;
++      return Math.ceil(ctx.measureText(label).width) + 12;
++    };
++    for (const pane of scene.orderedPanes()) {
++      if (pane.collapsed || pane.bounds.height <= 0) continue;
++      for (const tick of this.priceAxisTicks.ticksFor(scene, pane, this.coords))
++        master = Math.max(master, measure(tick.label, tick.major === true));
++      for (const band of pane.axisBands ?? []) master = Math.max(master, measure(band.label));
++      if (pane.axisFormat !== "none") {
++        const pct = percentScaleFor(scene, pane);
++        const last = pane.kind === "price" ? scene.bars[scene.bars.length - 1]?.close : undefined;
++        for (const value of [pane.scale.min, pane.scale.max, last]) {
++          if (Number.isFinite(value)) master = Math.max(master, measure(formatAxisValue(pane.scale, pane.bounds.height, value, pct, scene.priceMintick, pane.axisFormat)));
++        }
++      }
++      for (const model of scene.ownScaleIndicatorsForPane(pane.id)) {
++        const scale = scene.indicatorScales.get(model.id)?.scale;
++        if (!scale) continue;
++        for (const tick of paneAxisTicks(scale, pane.bounds.height, undefined, scene.priceMintick))
++          merged = Math.max(merged, measure(tick.label));
++      }
++    }
++    ctx.restore();
++    const width = master + merged * this.maxOwnScaleColumns();
++    scene.axisMasterWidth = master;
++    scene.axisMergedWidth = merged;
++    if (width === this.rightAxisW) return;
++    const plotWidth = this.coords.width + this.rightAxisW;
++    this.rightAxisW = width;
++    this.coords.setSize(Math.max(1, plotWidth - width), this.coords.height, this.coords.dpr);
++    this.publishGutters();
++    this.layoutPanes();
++  }
+   /** Paint the below-data (L-1) + geometry (L0) + chrome (L1) layers from the current scene/coords. */
+   paintData() {
++    this.fitAxisLabels();
+     this.syncLayerCanvasOrder();
+     this.stampScaleInvert();
+     this.backend.modelAlpha = this.modelAlpha;
+diff --git a/node_modules/@luxalgo/vela/dist/vela.global.js b/node_modules/@luxalgo/vela/dist/vela.global.js
+index ba01e3f..6f75b38 100644
+--- a/node_modules/@luxalgo/vela/dist/vela.global.js
++++ b/node_modules/@luxalgo/vela/dist/vela.global.js
+@@ -7272,11 +7272,11 @@ var Vela = (function (exports) {
+   function timeframeToMs(timeframe) {
+     const tf = timeframe.trim();
+     if (NAMED_TF_MS[tf]) return NAMED_TF_MS[tf];
+-    const m = /^(\d+)\s*(m|h|d|w)?$/i.exec(tf);
++    const m = /^(\d+)\s*(s|m|h|d|w)?$/i.exec(tf);
+     if (m) {
+       const n = parseInt(m[1], 10);
+       const unit = (m[2] ?? "m").toLowerCase();
+-      const mult = unit === "m" ? 6e4 : unit === "h" ? 36e5 : unit === "d" ? 864e5 : 6048e5;
++      const mult = unit === "s" ? 1e3 : unit === "m" ? 6e4 : unit === "h" ? 36e5 : unit === "d" ? 864e5 : 6048e5;
+       return n * mult;
+     }
+     return 36e5;
+@@ -24241,8 +24241,8 @@ ${overlayScrollbarCss(".vela-dialog.vela-ind-dialog *", 9)}
+   var AXIS_MASTER_W = 64;
+   var AXIS_MERGED_W = 56;
+   var PANE_SEPARATOR_PX = 3;
+-  function axisColumnX(dataW, column) {
+-    return column === 0 ? dataW : dataW + AXIS_MASTER_W + (column - 1) * AXIS_MERGED_W;
++  function axisColumnX(dataW, column, master = AXIS_MASTER_W, merged = AXIS_MERGED_W) {
++    return column === 0 ? dataW : dataW + master + (column - 1) * merged;
+   }
+ 
+   // src/renderers/native/chrome/AxisScaleButtons.ts
+@@ -24281,7 +24281,7 @@ ${overlayScrollbarCss(".vela-dialog.vela-ind-dialog *", 9)}
+         const x = e.clientX - rect.left;
+         const gutterLeft = rect.width - this.deps.rightAxis();
+         let hit = null;
+-        if (x >= gutterLeft && x <= gutterLeft + AXIS_MASTER_W) {
++        if (x >= gutterLeft && x <= gutterLeft + this.deps.masterAxis()) {
+           const y = e.clientY - rect.top;
+           for (const p of this.deps.panes()) {
+             if (p.collapsed || p.height < MIN_PANE_H) continue;
+@@ -24358,7 +24358,8 @@ ${overlayScrollbarCss(".vela-dialog.vela-ind-dialog *", 9)}
+         this.cluster.style.display = "none";
+         return;
+       }
+-      this.cluster.style.right = `${this.deps.rightAxis() - AXIS_MASTER_W}px`;
++      this.cluster.style.width = `${this.deps.masterAxis() - AXIS_BORDER}px`;
++      this.cluster.style.right = `${this.deps.rightAxis() - this.deps.masterAxis()}px`;
+       this.cluster.style.top = `${pane.top + pane.height - CLUSTER_H}px`;
+       this.cluster.style.display = "flex";
+       this.sync();
+@@ -29756,7 +29757,7 @@ void main() {
+         merged.forEach((model, k) => {
+           const sc = scene.indicatorScales.get(model.id)?.scale;
+           if (!sc) return;
+-          const x = axisColumnX(dataW, k + 1);
++          const x = axisColumnX(dataW, k + 1, scene.axisMasterWidth, scene.axisMergedWidth);
+           for (const t of paneAxisTicks(sc, pane.bounds.height, void 0, scene.priceMintick)) {
+             const y = coords.priceToY(t.price, sc, pane.bounds);
+             if (y < pane.bounds.top + 6 || y > pane.bounds.top + pane.bounds.height - 4) continue;
+@@ -39685,6 +39686,7 @@ ${overlayScrollbarCss(".vela-sd-pane")}
+       this.axisScaleButtons = new AxisScaleButtons(this.plot, theme, {
+         panes: () => this.axisScaleViews(),
+         rightAxis: () => this.rightAxisW,
++        masterAxis: () => this.scene.axisMasterWidth ?? AXIS_MASTER_W,
+         onToggleAuto: (paneId) => this.togglePaneAuto(paneId),
+         onToggleLog: (paneId) => {
+           const pane = this.scene.panes.get(paneId);
+@@ -40050,7 +40052,7 @@ ${overlayScrollbarCss(".vela-sd-pane")}
+     }
+     /** Recompute the right-gutter width (master column + one per merged scale). Re-sizes on change. */
+     refreshAxisWidth() {
+-      const w = RIGHT_AXIS_W + AXIS_COL_W * this.maxOwnScaleColumns();
++      const w = (this.scene.axisMasterWidth ?? RIGHT_AXIS_W) + (this.scene.axisMergedWidth ?? AXIS_COL_W) * this.maxOwnScaleColumns();
+       if (w === this.rightAxisW) return false;
+       this.rightAxisW = w;
+       this.publishGutters();
+@@ -40671,8 +40673,10 @@ ${overlayScrollbarCss(".vela-sd-pane")}
+       if (!pane) return null;
+       const dataW = this.coords.width;
+       const merged = this.scene.ownScaleIndicatorsForPane(pane.id);
+-      if (x >= dataW + AXIS_MASTER_W && merged.length > 0) {
+-        const k = Math.floor((x - dataW - AXIS_MASTER_W) / AXIS_MERGED_W);
++      const masterWidth = this.scene.axisMasterWidth ?? AXIS_MASTER_W;
++      const mergedWidth = this.scene.axisMergedWidth ?? AXIS_MERGED_W;
++      if (x >= dataW + masterWidth && merged.length > 0) {
++        const k = Math.floor((x - dataW - masterWidth) / mergedWidth);
+         const model = merged[k];
+         if (model) return { holder: this.scene.ensureIndicatorScale(model.id, pane.scaleTarget), height: pane.bounds.height };
+       }
+@@ -41096,8 +41100,52 @@ ${overlayScrollbarCss(".vela-sd-pane")}
+         cursor: this.lastPointer
+       };
+     }
++    /** Fit full axis labels before painting; keep widths once grown to avoid autoscale jitter. */
++    fitAxisLabels() {
++      const ctx = this.chromeCanvas?.getContext("2d");
++      if (!ctx || this.coords.width <= 0) return;
++      const scene = this.scene;
++      let master = scene.axisMasterWidth ?? AXIS_MASTER_W;
++      let merged = scene.axisMergedWidth ?? AXIS_MERGED_W;
++      ctx.save();
++      const font = `${scene.style.fontSize}px ${this.theme.fontFamily}`;
++      const measure = (label, major = false) => {
++        ctx.font = major ? `600 ${font}` : font;
++        return Math.ceil(ctx.measureText(label).width) + 12;
++      };
++      for (const pane of scene.orderedPanes()) {
++        if (pane.collapsed || pane.bounds.height <= 0) continue;
++        for (const tick of this.priceAxisTicks.ticksFor(scene, pane, this.coords))
++          master = Math.max(master, measure(tick.label, tick.major === true));
++        for (const band of pane.axisBands ?? []) master = Math.max(master, measure(band.label));
++        if (pane.axisFormat !== "none") {
++          const pct = percentScaleFor(scene, pane);
++          const last = pane.kind === "price" ? scene.bars[scene.bars.length - 1]?.close : undefined;
++          for (const value of [pane.scale.min, pane.scale.max, last]) {
++            if (Number.isFinite(value)) master = Math.max(master, measure(formatAxisValue(pane.scale, pane.bounds.height, value, pct, scene.priceMintick, pane.axisFormat)));
++          }
++        }
++        for (const model of scene.ownScaleIndicatorsForPane(pane.id)) {
++          const scale = scene.indicatorScales.get(model.id)?.scale;
++          if (!scale) continue;
++          for (const tick of paneAxisTicks(scale, pane.bounds.height, undefined, scene.priceMintick))
++            merged = Math.max(merged, measure(tick.label));
++        }
++      }
++      ctx.restore();
++      const width = master + merged * this.maxOwnScaleColumns();
++      scene.axisMasterWidth = master;
++      scene.axisMergedWidth = merged;
++      if (width === this.rightAxisW) return;
++      const plotWidth = this.coords.width + this.rightAxisW;
++      this.rightAxisW = width;
++      this.coords.setSize(Math.max(1, plotWidth - width), this.coords.height, this.coords.dpr);
++      this.publishGutters();
++      this.layoutPanes();
++    }
+     /** Paint the below-data (L-1) + geometry (L0) + chrome (L1) layers from the current scene/coords. */
+     paintData() {
++      this.fitAxisLabels();
+       this.syncLayerCanvasOrder();
+       this.stampScaleInvert();
+       this.backend.modelAlpha = this.modelAlpha;
+diff --git a/node_modules/@luxalgo/vela/dist/widget.cjs b/node_modules/@luxalgo/vela/dist/widget.cjs
+index 3f6910e..b62fe3e 100644
+--- a/node_modules/@luxalgo/vela/dist/widget.cjs
++++ b/node_modules/@luxalgo/vela/dist/widget.cjs
+@@ -479,11 +479,11 @@ var NAMED_TF_MS = { D: 864e5, W: 6048e5, M: 2592e6 };
+ function timeframeToMs(timeframe) {
+   const tf = timeframe.trim();
+   if (NAMED_TF_MS[tf]) return NAMED_TF_MS[tf];
+-  const m = /^(\d+)\s*(m|h|d|w)?$/i.exec(tf);
++  const m = /^(\d+)\s*(s|m|h|d|w)?$/i.exec(tf);
+   if (m) {
+     const n = parseInt(m[1], 10);
+     const unit = (m[2] ?? "m").toLowerCase();
+-    const mult = unit === "m" ? 6e4 : unit === "h" ? 36e5 : unit === "d" ? 864e5 : 6048e5;
++    const mult = unit === "s" ? 1e3 : unit === "m" ? 6e4 : unit === "h" ? 36e5 : unit === "d" ? 864e5 : 6048e5;
+     return n * mult;
+   }
+   return 36e5;
+@@ -24764,8 +24764,8 @@ var PaneControls = class {
+ var AXIS_MASTER_W = 64;
+ var AXIS_MERGED_W = 56;
+ var PANE_SEPARATOR_PX = 3;
+-function axisColumnX(dataW, column) {
+-  return column === 0 ? dataW : dataW + AXIS_MASTER_W + (column - 1) * AXIS_MERGED_W;
++function axisColumnX(dataW, column, master = AXIS_MASTER_W, merged = AXIS_MERGED_W) {
++  return column === 0 ? dataW : dataW + master + (column - 1) * merged;
+ }
+ 
+ // src/renderers/native/chrome/AxisScaleButtons.ts
+@@ -24804,7 +24804,7 @@ var AxisScaleButtons = class {
+       const x = e.clientX - rect.left;
+       const gutterLeft = rect.width - this.deps.rightAxis();
+       let hit = null;
+-      if (x >= gutterLeft && x <= gutterLeft + AXIS_MASTER_W) {
++      if (x >= gutterLeft && x <= gutterLeft + this.deps.masterAxis()) {
+         const y = e.clientY - rect.top;
+         for (const p of this.deps.panes()) {
+           if (p.collapsed || p.height < MIN_PANE_H) continue;
+@@ -24881,7 +24881,8 @@ var AxisScaleButtons = class {
+       this.cluster.style.display = "none";
+       return;
+     }
+-    this.cluster.style.right = `${this.deps.rightAxis() - AXIS_MASTER_W}px`;
++    this.cluster.style.width = `${this.deps.masterAxis() - AXIS_BORDER}px`;
++    this.cluster.style.right = `${this.deps.rightAxis() - this.deps.masterAxis()}px`;
+     this.cluster.style.top = `${pane.top + pane.height - CLUSTER_H}px`;
+     this.cluster.style.display = "flex";
+     this.sync();
+@@ -29128,6 +29129,9 @@ function formatAxisValue(scale, heightPx, value, pct, mintick, format) {
+   return formatPriceLabel(scale, heightPx, value, mintick);
+ }
+ function formatPriceLabel(scale, heightPx, value, mintick) {
++  // invictus patch: the host may write a price its own way (a run of zeros in subscript); null keeps this one.
++  const hostLabel = typeof globalThis.__velaPriceLabel === "function" ? globalThis.__velaPriceLabel(value) : null;
++  if (typeof hostLabel === "string") return hostLabel;
+   const wideLog = scale.log && Math.log10(scale.max) - Math.log10(scale.min) >= 1.1;
+   if (wideLog) {
+     const d = valueDecimals(value);
+@@ -29928,7 +29932,7 @@ var ChromeRenderer = class {
+       merged.forEach((model, k) => {
+         const sc = scene.indicatorScales.get(model.id)?.scale;
+         if (!sc) return;
+-        const x = axisColumnX(dataW, k + 1);
++        const x = axisColumnX(dataW, k + 1, scene.axisMasterWidth, scene.axisMergedWidth);
+         for (const t of paneAxisTicks(sc, pane.bounds.height, void 0, scene.priceMintick)) {
+           const y = coords.priceToY(t.price, sc, pane.bounds);
+           if (y < pane.bounds.top + 6 || y > pane.bounds.top + pane.bounds.height - 4) continue;
+@@ -38976,6 +38980,7 @@ var NativeRenderer = class {
+     this.axisScaleButtons = new AxisScaleButtons(this.plot, theme, {
+       panes: () => this.axisScaleViews(),
+       rightAxis: () => this.rightAxisW,
++      masterAxis: () => this.scene.axisMasterWidth ?? AXIS_MASTER_W,
+       onToggleAuto: (paneId) => this.togglePaneAuto(paneId),
+       onToggleLog: (paneId) => {
+         const pane = this.scene.panes.get(paneId);
+@@ -39341,7 +39346,7 @@ var NativeRenderer = class {
+   }
+   /** Recompute the right-gutter width (master column + one per merged scale). Re-sizes on change. */
+   refreshAxisWidth() {
+-    const w = RIGHT_AXIS_W + AXIS_COL_W * this.maxOwnScaleColumns();
++    const w = (this.scene.axisMasterWidth ?? RIGHT_AXIS_W) + (this.scene.axisMergedWidth ?? AXIS_COL_W) * this.maxOwnScaleColumns();
+     if (w === this.rightAxisW) return false;
+     this.rightAxisW = w;
+     this.publishGutters();
+@@ -39962,8 +39967,10 @@ var NativeRenderer = class {
+     if (!pane) return null;
+     const dataW = this.coords.width;
+     const merged = this.scene.ownScaleIndicatorsForPane(pane.id);
+-    if (x >= dataW + AXIS_MASTER_W && merged.length > 0) {
+-      const k = Math.floor((x - dataW - AXIS_MASTER_W) / AXIS_MERGED_W);
++    const masterWidth = this.scene.axisMasterWidth ?? AXIS_MASTER_W;
++    const mergedWidth = this.scene.axisMergedWidth ?? AXIS_MERGED_W;
++    if (x >= dataW + masterWidth && merged.length > 0) {
++      const k = Math.floor((x - dataW - masterWidth) / mergedWidth);
+       const model = merged[k];
+       if (model) return { holder: this.scene.ensureIndicatorScale(model.id, pane.scaleTarget), height: pane.bounds.height };
+     }
+@@ -40387,8 +40394,52 @@ var NativeRenderer = class {
+       cursor: this.lastPointer
+     };
+   }
++  /** Fit full axis labels before painting; keep widths once grown to avoid autoscale jitter. */
++  fitAxisLabels() {
++    const ctx = this.chromeCanvas?.getContext("2d");
++    if (!ctx || this.coords.width <= 0) return;
++    const scene = this.scene;
++    let master = scene.axisMasterWidth ?? AXIS_MASTER_W;
++    let merged = scene.axisMergedWidth ?? AXIS_MERGED_W;
++    ctx.save();
++    const font = `${scene.style.fontSize}px ${this.theme.fontFamily}`;
++    const measure = (label, major = false) => {
++      ctx.font = major ? `600 ${font}` : font;
++      return Math.ceil(ctx.measureText(label).width) + 12;
++    };
++    for (const pane of scene.orderedPanes()) {
++      if (pane.collapsed || pane.bounds.height <= 0) continue;
++      for (const tick of this.priceAxisTicks.ticksFor(scene, pane, this.coords))
++        master = Math.max(master, measure(tick.label, tick.major === true));
++      for (const band of pane.axisBands ?? []) master = Math.max(master, measure(band.label));
++      if (pane.axisFormat !== "none") {
++        const pct = percentScaleFor(scene, pane);
++        const last = pane.kind === "price" ? scene.bars[scene.bars.length - 1]?.close : undefined;
++        for (const value of [pane.scale.min, pane.scale.max, last]) {
++          if (Number.isFinite(value)) master = Math.max(master, measure(formatAxisValue(pane.scale, pane.bounds.height, value, pct, scene.priceMintick, pane.axisFormat)));
++        }
++      }
++      for (const model of scene.ownScaleIndicatorsForPane(pane.id)) {
++        const scale = scene.indicatorScales.get(model.id)?.scale;
++        if (!scale) continue;
++        for (const tick of paneAxisTicks(scale, pane.bounds.height, undefined, scene.priceMintick))
++          merged = Math.max(merged, measure(tick.label));
++      }
++    }
++    ctx.restore();
++    const width = master + merged * this.maxOwnScaleColumns();
++    scene.axisMasterWidth = master;
++    scene.axisMergedWidth = merged;
++    if (width === this.rightAxisW) return;
++    const plotWidth = this.coords.width + this.rightAxisW;
++    this.rightAxisW = width;
++    this.coords.setSize(Math.max(1, plotWidth - width), this.coords.height, this.coords.dpr);
++    this.publishGutters();
++    this.layoutPanes();
++  }
+   /** Paint the below-data (L-1) + geometry (L0) + chrome (L1) layers from the current scene/coords. */
+   paintData() {
++    this.fitAxisLabels();
+     this.syncLayerCanvasOrder();
+     this.stampScaleInvert();
+     this.backend.modelAlpha = this.modelAlpha;
+@@ -45544,6 +45595,9 @@ function decimalsFor(ref) {
+ }
+ function fmtPrice(n, dp) {
+   if (n == null || !Number.isFinite(n)) return "\u2014";
++  // invictus patch: the host may write a price its own way (a run of zeros in subscript); null keeps this one.
++  const hostLabel = typeof globalThis.__velaPriceLabel === "function" ? globalThis.__velaPriceLabel(n) : null;
++  if (typeof hostLabel === "string") return hostLabel;
+   const d = dp ?? decimalsFor(n);
+   return n.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+ }
+diff --git a/node_modules/@luxalgo/vela/dist/workspace.cjs b/node_modules/@luxalgo/vela/dist/workspace.cjs
+index 9f93629..31164d7 100644
+--- a/node_modules/@luxalgo/vela/dist/workspace.cjs
++++ b/node_modules/@luxalgo/vela/dist/workspace.cjs
+@@ -479,11 +479,11 @@ var NAMED_TF_MS = { D: 864e5, W: 6048e5, M: 2592e6 };
+ function timeframeToMs(timeframe) {
+   const tf = timeframe.trim();
+   if (NAMED_TF_MS[tf]) return NAMED_TF_MS[tf];
+-  const m = /^(\d+)\s*(m|h|d|w)?$/i.exec(tf);
++  const m = /^(\d+)\s*(s|m|h|d|w)?$/i.exec(tf);
+   if (m) {
+     const n = parseInt(m[1], 10);
+     const unit = (m[2] ?? "m").toLowerCase();
+-    const mult = unit === "m" ? 6e4 : unit === "h" ? 36e5 : unit === "d" ? 864e5 : 6048e5;
++    const mult = unit === "s" ? 1e3 : unit === "m" ? 6e4 : unit === "h" ? 36e5 : unit === "d" ? 864e5 : 6048e5;
+     return n * mult;
+   }
+   return 36e5;
+@@ -24696,8 +24696,8 @@ var PaneControls = class {
+ var AXIS_MASTER_W = 64;
+ var AXIS_MERGED_W = 56;
+ var PANE_SEPARATOR_PX = 3;
+-function axisColumnX(dataW, column) {
+-  return column === 0 ? dataW : dataW + AXIS_MASTER_W + (column - 1) * AXIS_MERGED_W;
++function axisColumnX(dataW, column, master = AXIS_MASTER_W, merged = AXIS_MERGED_W) {
++  return column === 0 ? dataW : dataW + master + (column - 1) * merged;
+ }
+ 
+ // src/renderers/native/chrome/AxisScaleButtons.ts
+@@ -24736,7 +24736,7 @@ var AxisScaleButtons = class {
+       const x = e.clientX - rect.left;
+       const gutterLeft = rect.width - this.deps.rightAxis();
+       let hit = null;
+-      if (x >= gutterLeft && x <= gutterLeft + AXIS_MASTER_W) {
++      if (x >= gutterLeft && x <= gutterLeft + this.deps.masterAxis()) {
+         const y = e.clientY - rect.top;
+         for (const p of this.deps.panes()) {
+           if (p.collapsed || p.height < MIN_PANE_H) continue;
+@@ -24813,7 +24813,8 @@ var AxisScaleButtons = class {
+       this.cluster.style.display = "none";
+       return;
+     }
+-    this.cluster.style.right = `${this.deps.rightAxis() - AXIS_MASTER_W}px`;
++    this.cluster.style.width = `${this.deps.masterAxis() - AXIS_BORDER}px`;
++    this.cluster.style.right = `${this.deps.rightAxis() - this.deps.masterAxis()}px`;
+     this.cluster.style.top = `${pane.top + pane.height - CLUSTER_H}px`;
+     this.cluster.style.display = "flex";
+     this.sync();
+@@ -29060,6 +29061,9 @@ function formatAxisValue(scale, heightPx, value, pct, mintick, format) {
+   return formatPriceLabel(scale, heightPx, value, mintick);
+ }
+ function formatPriceLabel(scale, heightPx, value, mintick) {
++  // invictus patch: the host may write a price its own way (a run of zeros in subscript); null keeps this one.
++  const hostLabel = typeof globalThis.__velaPriceLabel === "function" ? globalThis.__velaPriceLabel(value) : null;
++  if (typeof hostLabel === "string") return hostLabel;
+   const wideLog = scale.log && Math.log10(scale.max) - Math.log10(scale.min) >= 1.1;
+   if (wideLog) {
+     const d = valueDecimals(value);
+@@ -29860,7 +29864,7 @@ var ChromeRenderer = class {
+       merged.forEach((model, k) => {
+         const sc = scene.indicatorScales.get(model.id)?.scale;
+         if (!sc) return;
+-        const x = axisColumnX(dataW, k + 1);
++        const x = axisColumnX(dataW, k + 1, scene.axisMasterWidth, scene.axisMergedWidth);
+         for (const t of paneAxisTicks(sc, pane.bounds.height, void 0, scene.priceMintick)) {
+           const y = coords.priceToY(t.price, sc, pane.bounds);
+           if (y < pane.bounds.top + 6 || y > pane.bounds.top + pane.bounds.height - 4) continue;
+@@ -38908,6 +38912,7 @@ var NativeRenderer = class {
+     this.axisScaleButtons = new AxisScaleButtons(this.plot, theme, {
+       panes: () => this.axisScaleViews(),
+       rightAxis: () => this.rightAxisW,
++      masterAxis: () => this.scene.axisMasterWidth ?? AXIS_MASTER_W,
+       onToggleAuto: (paneId) => this.togglePaneAuto(paneId),
+       onToggleLog: (paneId) => {
+         const pane = this.scene.panes.get(paneId);
+@@ -39273,7 +39278,7 @@ var NativeRenderer = class {
+   }
+   /** Recompute the right-gutter width (master column + one per merged scale). Re-sizes on change. */
+   refreshAxisWidth() {
+-    const w = RIGHT_AXIS_W + AXIS_COL_W * this.maxOwnScaleColumns();
++    const w = (this.scene.axisMasterWidth ?? RIGHT_AXIS_W) + (this.scene.axisMergedWidth ?? AXIS_COL_W) * this.maxOwnScaleColumns();
+     if (w === this.rightAxisW) return false;
+     this.rightAxisW = w;
+     this.publishGutters();
+@@ -39894,8 +39899,10 @@ var NativeRenderer = class {
+     if (!pane) return null;
+     const dataW = this.coords.width;
+     const merged = this.scene.ownScaleIndicatorsForPane(pane.id);
+-    if (x >= dataW + AXIS_MASTER_W && merged.length > 0) {
+-      const k = Math.floor((x - dataW - AXIS_MASTER_W) / AXIS_MERGED_W);
++    const masterWidth = this.scene.axisMasterWidth ?? AXIS_MASTER_W;
++    const mergedWidth = this.scene.axisMergedWidth ?? AXIS_MERGED_W;
++    if (x >= dataW + masterWidth && merged.length > 0) {
++      const k = Math.floor((x - dataW - masterWidth) / mergedWidth);
+       const model = merged[k];
+       if (model) return { holder: this.scene.ensureIndicatorScale(model.id, pane.scaleTarget), height: pane.bounds.height };
+     }
+@@ -40319,8 +40326,52 @@ var NativeRenderer = class {
+       cursor: this.lastPointer
+     };
+   }
++  /** Fit full axis labels before painting; keep widths once grown to avoid autoscale jitter. */
++  fitAxisLabels() {
++    const ctx = this.chromeCanvas?.getContext("2d");
++    if (!ctx || this.coords.width <= 0) return;
++    const scene = this.scene;
++    let master = scene.axisMasterWidth ?? AXIS_MASTER_W;
++    let merged = scene.axisMergedWidth ?? AXIS_MERGED_W;
++    ctx.save();
++    const font = `${scene.style.fontSize}px ${this.theme.fontFamily}`;
++    const measure = (label, major = false) => {
++      ctx.font = major ? `600 ${font}` : font;
++      return Math.ceil(ctx.measureText(label).width) + 12;
++    };
++    for (const pane of scene.orderedPanes()) {
++      if (pane.collapsed || pane.bounds.height <= 0) continue;
++      for (const tick of this.priceAxisTicks.ticksFor(scene, pane, this.coords))
++        master = Math.max(master, measure(tick.label, tick.major === true));
++      for (const band of pane.axisBands ?? []) master = Math.max(master, measure(band.label));
++      if (pane.axisFormat !== "none") {
++        const pct = percentScaleFor(scene, pane);
++        const last = pane.kind === "price" ? scene.bars[scene.bars.length - 1]?.close : undefined;
++        for (const value of [pane.scale.min, pane.scale.max, last]) {
++          if (Number.isFinite(value)) master = Math.max(master, measure(formatAxisValue(pane.scale, pane.bounds.height, value, pct, scene.priceMintick, pane.axisFormat)));
++        }
++      }
++      for (const model of scene.ownScaleIndicatorsForPane(pane.id)) {
++        const scale = scene.indicatorScales.get(model.id)?.scale;
++        if (!scale) continue;
++        for (const tick of paneAxisTicks(scale, pane.bounds.height, undefined, scene.priceMintick))
++          merged = Math.max(merged, measure(tick.label));
++      }
++    }
++    ctx.restore();
++    const width = master + merged * this.maxOwnScaleColumns();
++    scene.axisMasterWidth = master;
++    scene.axisMergedWidth = merged;
++    if (width === this.rightAxisW) return;
++    const plotWidth = this.coords.width + this.rightAxisW;
++    this.rightAxisW = width;
++    this.coords.setSize(Math.max(1, plotWidth - width), this.coords.height, this.coords.dpr);
++    this.publishGutters();
++    this.layoutPanes();
++  }
+   /** Paint the below-data (L-1) + geometry (L0) + chrome (L1) layers from the current scene/coords. */
+   paintData() {
++    this.fitAxisLabels();
+     this.syncLayerCanvasOrder();
+     this.stampScaleInvert();
+     this.backend.modelAlpha = this.modelAlpha;
+@@ -45476,6 +45527,9 @@ function decimalsFor(ref) {
+ }
+ function fmtPrice(n, dp) {
+   if (n == null || !Number.isFinite(n)) return "\u2014";
++  // invictus patch: the host may write a price its own way (a run of zeros in subscript); null keeps this one.
++  const hostLabel = typeof globalThis.__velaPriceLabel === "function" ? globalThis.__velaPriceLabel(n) : null;
++  if (typeof hostLabel === "string") return hostLabel;
+   const d = dp ?? decimalsFor(n);
+   return n.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+ }

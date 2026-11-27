@@ -1,0 +1,25 @@
+Copyright (c) 2026 ENCLAVIUM. All rights reserved.
+
+This repository is made available for one purpose only: evaluating the
+Invictus project as a hackathon submission ("Evaluation").
+
+You may view and read the source code, and clone it locally, solely for
+Evaluation by the hackathon organizers, judges and sponsors.
+
+You may NOT, without prior written permission from ENCLAVIUM:
+  - copy, modify, merge or create derivative works of the code;
+  - publish, distribute, sublicense or sell it, in whole or in part;
+  - deploy or run it, or any part of it, as a service for anyone;
+  - use it to train or fine-tune machine-learning models.
+
+Viewing or forking this repository on GitHub does not grant any of the
+rights above. No license, express or implied, is granted except the limited
+Evaluation right stated here. All rights not expressly granted are reserved.
+
+Third-party components keep their own licenses (see their notices).
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED. IN NO EVENT SHALL ENCLAVIUM BE LIABLE FOR ANY CLAIM, DAMAGES OR
+OTHER LIABILITY ARISING FROM THE SOFTWARE OR ITS USE.
+
+Contact: info@lpinvictus.com
